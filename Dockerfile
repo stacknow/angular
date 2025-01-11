@@ -1,25 +1,31 @@
-# Stage 1: Build the Angular app
+# Stage 1: Build the Angular SSR app
 FROM node:18-alpine AS build
 
 # Set the working directory inside the container
 WORKDIR /app
 
-# Copy package.json and package-lock.json to the working directory
+# Copy package.json and package-lock.json
 COPY package*.json ./
 
 # Install dependencies
 RUN npm install
 
-# Copy the rest of the application source code
+# Copy the rest of the Angular application source code
 COPY . .
 
-# Build the Angular app
-RUN npm run build --prod
+# Build the Angular SSR application
+RUN npm run build && npm run build:ssr
 
-# Stage 2: Serve the app with Nginx
-FROM nginx:stable-alpine
+# Stage 2: Set up Nginx and Node.js runtime environment
+FROM nginx:stable-alpine AS runtime
 
-# Create a custom Nginx configuration
+# Set the working directory for the Node.js server
+WORKDIR /app
+
+# Copy the built Angular SSR app from the previous stage
+COPY --from=build /app/dist/angular-app /app/dist/angular-app
+
+# Copy Nginx configuration
 RUN echo 'worker_processes 1; \
 events { worker_connections 1024; } \
 http { \
@@ -28,22 +34,44 @@ http { \
     access_log /dev/stdout; \
     error_log /dev/stderr warn; \
     sendfile        on; \
+    upstream angular_app { \
+        server 127.0.0.1:4000; \
+    } \
     server { \
         listen       80; \
         server_name  localhost; \
         location / { \
-            root   /usr/share/nginx/html; \
-            index  index.html; \
-            try_files $uri /index.html; \
+            proxy_pass http://angular_app; \
+            proxy_http_version 1.1; \
+            proxy_set_header Upgrade $http_upgrade; \
+            proxy_set_header Connection keep-alive; \
+            proxy_set_header Host $host; \
+            proxy_cache_bypass $http_upgrade; \
         } \
     } \
 }' > /etc/nginx/nginx.conf
 
-# Copy the build output from Stage 1 to the Nginx html directory
-COPY --from=build /app/dist/* /usr/share/nginx/html
+# Install Node.js for running the Angular SSR server
+FROM node:18-alpine AS app
 
-# Expose port 80 to the outside world
+# Set the working directory inside the container
+WORKDIR /app
+
+# Copy the built SSR app from the build stage
+COPY --from=build /app/dist/angular-app /app/dist/angular-app
+
+# Copy package.json and install production dependencies
+COPY package*.json ./
+RUN npm install --only=production
+
+# Expose the SSR server's port
+EXPOSE 4000
+
+# Start the Angular SSR server in the background
+CMD ["node", "dist/angular-app/server/server.mjs"]
+
+# Expose Nginx on port 80
 EXPOSE 80
 
-# Start the Nginx server
+# Start Nginx as the primary entrypoint
 CMD ["nginx", "-g", "daemon off;"]
