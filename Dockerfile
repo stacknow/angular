@@ -39,8 +39,8 @@ http { \
     } \
 }' > /etc/nginx/nginx.conf
 
-# Copy the Angular build output to the Nginx html directory
-COPY --from=build /app/dist/angular-app /usr/share/nginx/html
+# Copy the built Angular app to the Nginx HTML directory (only the 'browser' directory)
+COPY --from=build /app/dist/angular-app/browser /usr/share/nginx/html
 
 # Expose port 80
 EXPOSE 80
